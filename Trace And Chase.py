@@ -9,11 +9,11 @@ import time
 # ============================================================================
 # Variables
 # ============================================================================
-Straight_time = 25      # Duration of first straight segment (s)
-curve_time = 25         # Duration of turn (s)
+Straight_time = 12      # Duration of first straight segment (s)
+curve_time = 12         # Duration of turn (s)
 Straight_time2 = 25     # Duration of second straight segment (s)
 targ_vel = 750          # Target velocity (m/s)
-miss_vel = 800          # missile velocity (m/s)
+miss_vel = 900          # missile velocity (m/s)
 turn_angle = -np.pi*4/3   # Turn angle in radians (np.pi = 180°, np.pi/2 = 90°, etc.)
 tmax = 75
 dt = 0.001

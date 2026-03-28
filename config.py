@@ -10,7 +10,7 @@ MISSILE_SPEED = 800
 TURN_ANGLE = -np.pi * 4/3
 YZ_ANGLE = -np.pi / 12
 
-TIMEMAX = 75
+TMAX = 75
 DT = 0.001
 
 MISSILE_START = np.array([13000,12000,0])
