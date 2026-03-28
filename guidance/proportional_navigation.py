@@ -1,93 +1,53 @@
 import numpy as np
 
 
-def proportional_navigation(missile_pos,
-                            missile_vel,
-                            target_pos,
-                            target_vel,
-                            N=3):
+def proportional_navigation(
+    missile_pos: np.ndarray,
+    missile_vel: np.ndarray,
+    target_pos: np.ndarray,
+    target_vel: np.ndarray,
+    N: float = 3.0,
+) -> np.ndarray:
     """
-    Proportional Navigation Guidance
+    Proportional Navigation Guidance Law.
 
-    This function computes the lateral acceleration that the missile should
-    apply in order to intercept the target.
+    Commands a lateral acceleration proportional to the rotation rate of
+    the Line-Of-Sight (LOS) vector, scaled by closing velocity and the
+    navigation constant N.
 
-    PARAMETERS
+        a_cmd = N · Vc · ω_LOS
+
+    where ω_LOS is the LOS angular rate vector and Vc is closing speed.
+
+    Parameters
     ----------
-    missile_pos : np.array (3D vector)
-        Current position of the missile [x, y, z]
+    missile_pos : (3,) array — missile position (m)
+    missile_vel : (3,) array — missile velocity vector (m/s)
+    target_pos  : (3,) array — target position (m)
+    target_vel  : (3,) array — target velocity vector (m/s)
+    N           : navigation constant (dimensionless, typically 3–5)
 
-    missile_vel : np.array (3D vector)
-        Current velocity vector of the missile
-
-    target_pos : np.array (3D vector)
-        Current position of the target
-
-    target_vel : np.array (3D vector)
-        Current velocity vector of the target
-
-    N : float
-        Navigation constant (typically between 3 and 5)
-
-    RETURNS
+    Returns
     -------
-    accel_command : np.array
-        Acceleration vector the missile should apply
+    accel_cmd : (3,) array — commanded acceleration (m/s²)
     """
-
-    # ----------------------------------------------------------
-    # Step 1: Compute relative position vector
-    #
-    # This is the vector from the missile to the target.
-    # It defines the "Line Of Sight" (LOS).
-    # ----------------------------------------------------------
+    # Relative position (LOS vector: missile → target)
     r = target_pos - missile_pos
+    r_mag = np.linalg.norm(r)
 
-    # ----------------------------------------------------------
-    # Step 2: Compute relative velocity
-    #
-    # This tells us how the target is moving relative
-    # to the missile.
-    # ----------------------------------------------------------
-    v = target_vel - missile_vel
+    if r_mag < 1e-6:
+        return np.zeros(3)
 
-    # ----------------------------------------------------------
-    # Step 3: Compute Line-of-Sight (LOS) rotation rate
-    #
-    # If the LOS vector rotates over time, the target
-    # is not on a collision course.
-    #
-    # The cross product captures the angular rate
-    # of this LOS rotation.
-    # ----------------------------------------------------------
-    los_rate = np.cross(r, v) / np.linalg.norm(r)**2
+    # Relative velocity
+    v_rel = target_vel - missile_vel
 
-    # ----------------------------------------------------------
-    # Step 4: Compute closing velocity
-    #
-    # This measures how fast the missile and target
-    # are moving toward each other.
-    #
-    # Positive closing velocity means interception
-    # is possible.
-    # ----------------------------------------------------------
-    closing_vel = -np.dot(r, v) / np.linalg.norm(r)
+    # LOS angular rate vector  ω = (r × v) / |r|²
+    los_rate = np.cross(r, v_rel) / (r_mag ** 2)
 
-    # ----------------------------------------------------------
-    # Step 5: Compute commanded acceleration
-    #
-    # Proportional Navigation Law:
-    #
-    #   a = N * Vc * (LOS rate)
-    #
-    # where:
-    #   N  = navigation constant
-    #   Vc = closing velocity
-    #
-    # This causes the missile to steer in a way that
-    # keeps the LOS angle constant, producing an
-    # optimal interception trajectory.
-    # ----------------------------------------------------------
-    accel_command = N * closing_vel * los_rate
+    # Closing speed  Vc = -(r̂ · v_rel)
+    closing_vel = -np.dot(r, v_rel) / r_mag
 
-    return accel_command
+    # PN command
+    accel_cmd = N * closing_vel * los_rate
+
+    return accel_cmd

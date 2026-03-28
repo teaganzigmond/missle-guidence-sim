@@ -1,34 +1,46 @@
 import numpy as np
 
-STRAIGHT_TIME1 = 25
-CURVE_TIME = 25
-STRAIGHT_TIME2 = 25
+# ============================================================================
+# Time parameters
+# ============================================================================
+STRAIGHT_TIME1   = 25       # Duration of first straight segment (s)
+CURVE_TIME       = 25       # Duration of turn (s)
+STRAIGHT_TIME2   = 25       # Duration of second straight segment (s)
+TMAX             = 75       # Total simulation time (s)
+DT               = 0.001    # Timestep (s)
 
-TARGET_SPEED = 750
-MISSILE_SPEED = 800
+# ============================================================================
+# Speeds
+# ============================================================================
+TARGET_SPEED     = 750      # Aircraft speed (m/s)
+MISSILE_SPEED    = 800      # Missile speed (m/s)
 
-TURN_ANGLE = -np.pi * 4/3
-YZ_ANGLE = -np.pi / 12
+# ============================================================================
+# Geometry
+# ============================================================================
+TURN_ANGLE       = -np.pi * 4 / 3   # Aircraft turn angle (rad)
+YZ_ANGLE         = -np.pi / 12      # Out-of-plane tilt of turn (rad)
+CLIMB_RATE_CURVE = -0.001            # Altitude change rate during curve
 
-TMAX = 75
-DT = 0.001
+# ============================================================================
+# Starting positions
+# ============================================================================
+MISSILE_START    = np.array([13000.0, 12000.0,     0.0])   # (m)
+AIRCRAFT_START   = np.array([    0.0,     0.0, 12000.0])   # (m)
 
-MISSILE_START = np.array([13000,12000,0])
-AIRCRAFT_START = np.array([0,0,12000])
+# ============================================================================
+# Missile parameters
+# ============================================================================
+MISSILE_LAUNCH_TIME = 0.0   # Time missile launches (s)
+KILL_DISTANCE       = 2.0   # Intercept radius (m)
 
-MISSILE_LAUNCH_TIME = 0
-KILL_DISTANCE = 2
-CLIMB_RATE_CURVE = -0.001
+# ============================================================================
+# Guidance
+# ============================================================================
+NAV_CONSTANT = 3.0          # Proportional Navigation constant (typically 3–5)
 
-#######################################
-#   Missle G-Force and Gravity
-#######################################
-# Maximum allowable acceleration in multiples of gravity
-# (modern missiles often operate around 20–40 g)
-MAX_G_FORCE = 30
-
-# Gravitational acceleration constant
-GRAVITY = 9.81  # m/s^2
-
-# Convert g-force limit to acceleration limit
-MAX_ACCEL = MAX_G_FORCE * GRAVITY
+# ============================================================================
+# Animation
+# ============================================================================
+ANIMATION_INTERVAL  = 5     # Frame interval (ms)
+MAX_ANIMATION_FRAMES = 500  # Cap on number of rendered frames
