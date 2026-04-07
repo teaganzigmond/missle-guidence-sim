@@ -1,53 +1,103 @@
 import numpy as np
 
 
-def proportional_navigation(
-    missile_pos: np.ndarray,
-    missile_vel: np.ndarray,
-    target_pos: np.ndarray,
-    target_vel: np.ndarray,
-    N: float = 3.0,
-) -> np.ndarray:
+def proportional_navigation(missile_pos,
+                            missile_vel,
+                            target_pos,
+                            target_vel,
+                            N=5):
     """
-    Proportional Navigation Guidance Law.
+    Proportional Navigation Guidance (3D)
 
-    Commands a lateral acceleration proportional to the rotation rate of
-    the Line-Of-Sight (LOS) vector, scaled by closing velocity and the
-    navigation constant N.
+    Commands lateral acceleration proportional to the Line-Of-Sight (LOS)
+    rotation rate, causing the missile to steer toward a collision course.
 
-        a_cmd = N · Vc · ω_LOS
+    The standard PN law is:
+        a_cmd = N * Vc * (omega x r_hat)
 
-    where ω_LOS is the LOS angular rate vector and Vc is closing speed.
+    where:
+        N     = navigation constant (effective navigation ratio)
+        Vc    = closing velocity (rate of range decrease)
+        omega = LOS angular rate vector (rad/s)
+        r_hat = unit LOS vector
 
-    Parameters
+    Note: the acceleration is formed by crossing omega with r_hat,
+    NOT by using omega directly. omega points perpendicular to the LOS
+    plane (like a torque axis), while (omega x r_hat) gives the actual
+    in-plane steering direction. Using omega directly as the acceleration
+    vector is a common implementation error that causes the missile to
+    fly wildly out of plane in 3D scenarios.
+
+    Ref: DTIC ADP010953, Section 3.2 — Proportional Navigation guidance law
+    Ref: MIL-HDBK-1211 (1995), Section 5.6.3 — PN implementation
+
+    PARAMETERS
     ----------
-    missile_pos : (3,) array — missile position (m)
-    missile_vel : (3,) array — missile velocity vector (m/s)
-    target_pos  : (3,) array — target position (m)
-    target_vel  : (3,) array — target velocity vector (m/s)
-    N           : navigation constant (dimensionless, typically 3–5)
+    missile_pos : np.ndarray (3,)
+        Current missile position [m]
+    missile_vel : np.ndarray (3,)
+        Current missile velocity vector [m/s]
+    target_pos : np.ndarray (3,)
+        Current target position [m]
+    target_vel : np.ndarray (3,)
+        Current target velocity vector [m/s]
+    N : float
+        Effective navigation ratio (typically 3–5 for tail-chase,
+        5 recommended for this scenario geometry)
 
-    Returns
+    RETURNS
     -------
-    accel_cmd : (3,) array — commanded acceleration (m/s²)
+    accel_command : np.ndarray (3,)
+        Commanded acceleration vector [m/s^2], to be projected
+        laterally by the caller before application
     """
-    # Relative position (LOS vector: missile → target)
+
+    # ----------------------------------------------------------
+    # Step 1: LOS vector and unit vector
+    #
+    # r points from missile to target.
+    # ----------------------------------------------------------
     r = target_pos - missile_pos
-    r_mag = np.linalg.norm(r)
+    dist = np.linalg.norm(r)
+    r_hat = r / dist
 
-    if r_mag < 1e-6:
-        return np.zeros(3)
-
-    # Relative velocity
+    # ----------------------------------------------------------
+    # Step 2: Relative velocity
+    # ----------------------------------------------------------
     v_rel = target_vel - missile_vel
 
-    # LOS angular rate vector  ω = (r × v) / |r|²
-    los_rate = np.cross(r, v_rel) / (r_mag ** 2)
+    # ----------------------------------------------------------
+    # Step 3: LOS angular rate vector (rad/s)
+    #
+    # omega = (r x v_rel) / |r|^2
+    #
+    # This vector points perpendicular to the LOS plane (like a
+    # rotation axis). Its magnitude is the angular rate of LOS
+    # rotation. Do NOT use this directly as an acceleration — it
+    # points out-of-plane.
+    #
+    # Ref: DTIC ADP010953, Eq. 3.1
+    # ----------------------------------------------------------
+    omega = np.cross(r, v_rel) / dist**2
 
-    # Closing speed  Vc = -(r̂ · v_rel)
-    closing_vel = -np.dot(r, v_rel) / r_mag
+    # ----------------------------------------------------------
+    # Step 4: Closing velocity
+    #
+    # Vc > 0 means missile and target are converging.
+    # ----------------------------------------------------------
+    closing_vel = -np.dot(r, v_rel) / dist
 
-    # PN command
-    accel_cmd = N * closing_vel * los_rate
+    # ----------------------------------------------------------
+    # Step 5: Commanded acceleration
+    #
+    # a_cmd = N * Vc * (omega x r_hat)
+    #
+    # The cross product (omega x r_hat) rotates the axis-vector
+    # omega back into the LOS plane, giving an in-plane steering
+    # direction perpendicular to the LOS.
+    #
+    # Ref: DTIC ADP010953, Eq. 3.4
+    # ----------------------------------------------------------
+    accel_command = N * closing_vel * np.cross(omega, r_hat)
 
-    return accel_cmd
+    return accel_command

@@ -1,39 +1,29 @@
 """
-Missile Guidance Simulation — Proportional Navigation
-======================================================
-Simulates a missile intercepting a maneuvering aircraft in 3D space.
+Missile Guidance Simulation
 
-Guidance law : Proportional Navigation (PN)
-             Commands acceleration proportional to the LOS rotation rate,
-             steering the missile onto a collision course rather than
-             chasing the target's current position (pure pursuit).
+This project simulates missile interception of a maneuvering aircraft
+using Proportional Navigation (PN), a widely used missile guidance law.
 
-Target path  : Straight → circular arc turn (3D) → straight
+Proportional Navigation commands the missile to apply lateral
+acceleration proportional to the rate of rotation of the line-of-sight
+between the missile and target.
 
-Tune the scenario in config.py — no changes needed here.
+Typical navigation constants range from 3 to 5.
+Ref: DTIC ADP010953
+
+This simulation models:
+    - missile kinematics under PN guidance
+    - target motion (multi-segment trajectory)
+    - lateral g-force limiting
+    - interception logic
+    - 3D trajectory visualization
 """
 
 from simulation.environment import Environment
 from visualization.animation import animate
 
+env = Environment()
+target_states, missile_states, result = env.run()
 
-def main():
-    # ── Run simulation ────────────────────────────────────────────────
-    # Environment precomputes the target trajectory, then steps the
-    # missile forward timestep-by-timestep using PN guidance.
-    print("Running simulation...")
-    env    = Environment()
-    result = env.run()
-
-    # ── Print summary ─────────────────────────────────────────────────
-    # Shows intercept result, timing, miss distance, and key parameters.
-    print(result.summary())
-
-    # ── Animate ───────────────────────────────────────────────────────
-    # Opens a 3D Matplotlib window with live position trails and HUD.
-    print("Launching animation...")
-    animate(result)
-
-
-if __name__ == "__main__":
-    main()
+print("Launching animation...")
+animate(env.times, target_states, missile_states, result)

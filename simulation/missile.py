@@ -1,122 +1,123 @@
 import numpy as np
-from enum import Enum, auto
-
 import config
 from guidance.proportional_navigation import proportional_navigation
 
+# MissileState enum for clean state machine
+# Ref: MIL-HDBK-1211(MI), Section 5.5 - missile flight phases
+from enum import Enum
 
 class MissileState(Enum):
-    """Lifecycle states of the missile."""
-    READY       = auto()   # Waiting for launch time
-    LAUNCHED    = auto()   # In flight, homing on target
-    INTERCEPTED = auto()   # Kill condition met
-    MISSED      = auto()   # Simulation ended without intercept
+    FLYING   = "flying"
+    HIT      = "hit"
+    MISSED   = "missed"
 
 
 class Missile:
-    """
-    Proportional Navigation missile that homes on a moving target.
-
-    The missile maintains a velocity *vector* (not just a scalar speed)
-    so that PN guidance can apply lateral acceleration correctly.
-    On each timestep the speed is renormalised to MISSILE_SPEED so that
-    propulsion is assumed to hold Mach number constant.
-    """
 
     def __init__(self):
-        self.state          = MissileState.READY
-        self.position       = config.MISSILE_START.astype(float)
+        self.position = config.MISSILE_START.copy().astype(float)
+        self.speed    = config.MISSILE_SPEED
 
-        # Initialise velocity pointing directly at aircraft start
-        initial_dir         = config.AIRCRAFT_START - config.MISSILE_START
-        norm                = np.linalg.norm(initial_dir)
+        # Initialize velocity as a unit vector pointing generally toward
+        # the aircraft start, scaled to missile speed.
+        # This gives PN a meaningful initial velocity vector to work with.
+        # Ref: MIL-HDBK-1211(MI) Section 4.4.1 - initial conditions
+        initial_direction = config.AIRCRAFT_START - config.MISSILE_START
+        norm = np.linalg.norm(initial_direction)
         if norm > 0:
-            initial_dir = initial_dir / norm
-        self.velocity       = initial_dir * config.MISSILE_SPEED
+            self.velocity = (initial_direction / norm) * self.speed
+        else:
+            self.velocity = np.array([self.speed, 0.0, 0.0])
 
-        # Event records
-        self.intercept_time  = None
-        self.intercept_pos   = None
-        self.launch_time     = None
-
-    # ------------------------------------------------------------------
-    # Properties
-    # ------------------------------------------------------------------
+        self.state   = MissileState.FLYING
+        self.peak_g  = 0.0
 
     @property
-    def active(self) -> bool:
-        return self.state == MissileState.LAUNCHED
+    def active(self):
+        return self.state == MissileState.FLYING
 
-    # ------------------------------------------------------------------
-    # Simulation step
-    # ------------------------------------------------------------------
-
-    def step(self,
-             t: float,
-             target_pos: np.ndarray,
-             target_vel: np.ndarray,
-             dt: float) -> np.ndarray:
+    def step(self, target_pos, target_vel, dt):
         """
-        Advance missile state by one timestep.
+        Advance the missile state by one timestep.
 
-        Parameters
+        PARAMETERS
         ----------
-        t          : current simulation time (s)
-        target_pos : target position this timestep (m)
-        target_vel : target velocity this timestep (m/s)
-        dt         : timestep (s)
+        target_pos : np.array (3,)
+            Current target position [m]
+        target_vel : np.array (3,)
+            Current target velocity [m/s]
+        dt : float
+            Simulation timestep [s]
 
-        Returns
+        RETURNS
         -------
-        Current missile position (m).
+        position : np.array (3,)
+            Updated missile position
         """
 
-        # ── Waiting to launch ─────────────────────────────────────────
-        if self.state == MissileState.READY:
-            if t >= config.MISSILE_LAUNCH_TIME:
-                self.state      = MissileState.LAUNCHED
-                self.launch_time = t
-            return self.position.copy()
+        # Missile is frozen once it has hit or missed
+        if not self.active:
+            return self.position
 
-        # ── Already terminal ──────────────────────────────────────────
-        if self.state in (MissileState.INTERCEPTED, MissileState.MISSED):
-            return self.position.copy()
-
-        # ── In flight ─────────────────────────────────────────────────
-
-        # Check intercept condition before moving
-        r        = target_pos - self.position
+        # --------------------------------------------------
+        # Check intercept condition
+        # Ref: MIL-HDBK-1211(MI) Section 6.2.3
+        # --------------------------------------------------
+        r = target_pos - self.position
         distance = np.linalg.norm(r)
 
         if distance < config.KILL_DISTANCE:
-            self.state         = MissileState.INTERCEPTED
-            self.intercept_time = t
-            self.intercept_pos  = self.position.copy()
-            return self.position.copy()
+            print(f"  [HIT] distance = {distance:.2f} m")
+            self.state = MissileState.HIT
+            return self.position
 
-        # Compute PN acceleration
+        # --------------------------------------------------
+        # Proportional Navigation guidance
+        # Ref: DTIC ADP010953
+        # --------------------------------------------------
         accel = proportional_navigation(
-            missile_pos=self.position,
-            missile_vel=self.velocity,
-            target_pos=target_pos,
-            target_vel=target_vel,
-            N=config.NAV_CONSTANT,
+        self.position,
+        self.velocity,
+        target_pos,
+        target_vel,
+        N=config.NAV_CONSTANT
         )
 
-        # Update velocity: v = v + a·dt
-        self.velocity += accel * dt
+        # --------------------------------------------------
+        # Lateral g-force limiting
+        # Only lateral (perpendicular to velocity) acceleration
+        # is limited — axial thrust is separate.
+        # Ref: MIL-HDBK-1211(MI) Section 5.6.2
+        # --------------------------------------------------
+        vel_hat = self.velocity / np.linalg.norm(self.velocity)
+        accel_lateral = accel - np.dot(accel, vel_hat) * vel_hat
+        lateral_mag   = np.linalg.norm(accel_lateral)
 
-        # Renormalise to constant speed (propulsion holds Mach)
+        if lateral_mag > config.MAX_ACCEL:
+            accel_lateral = accel_lateral * (config.MAX_ACCEL / lateral_mag)
+
+        # Track peak g-load (lateral only)
+        # Ref: MIL-HDBK-1211(MI) Section 5.6
+        current_g = lateral_mag / config.GRAVITY
+        if current_g > self.peak_g:
+            self.peak_g = current_g
+
+        # --------------------------------------------------
+        # Update velocity: apply lateral acceleration only
+        # Speed is held constant by propulsion (constant-speed
+        # assumption for boost-sustain motors)
+        # Ref: MIL-HDBK-1211(MI) Section 5.4
+        # --------------------------------------------------
+        self.velocity = self.velocity + accel_lateral * dt
+
+        # Re-normalize to maintain constant speed
         speed = np.linalg.norm(self.velocity)
         if speed > 0:
-            self.velocity = (self.velocity / speed) * config.MISSILE_SPEED
+            self.velocity = (self.velocity / speed) * self.speed
 
-        # Update position: x = x + v·dt
-        self.position += self.velocity * dt
+        # --------------------------------------------------
+        # Update position: x = x + v*dt
+        # --------------------------------------------------
+        self.position = self.position + self.velocity * dt
 
-        return self.position.copy()
-
-    def mark_missed(self):
-        """Call after simulation loop ends if no intercept occurred."""
-        if self.state == MissileState.LAUNCHED:
-            self.state = MissileState.MISSED
+        return self.position

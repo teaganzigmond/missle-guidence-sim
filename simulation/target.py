@@ -4,131 +4,103 @@ import config
 
 class Target:
     """
-    Aircraft flying a three-segment trajectory:
-      1. Straight flight in +X from AIRCRAFT_START
-      2. Circular arc turn (optionally tilted out-of-plane)
-      3. Straight flight in the post-turn heading
+    Models a maneuvering aircraft flying a three-segment trajectory:
+      1. Straight flight along +X for STRAIGHT_TIME1 seconds
+      2. A banked circular turn with vertical drift over CURVE_TIME seconds
+      3. Straight flight in the post-turn direction for STRAIGHT_TIME2 seconds,
+         after which the target holds its final position
 
-    The full trajectory is precomputed once on construction so that
-    position can be queried at any time index without mutable global state.
+    Trajectory geometry matches the reference implementation in
+    trace_and_chase.py (read-only).
     """
 
     def __init__(self):
-        self._times         = np.arange(0, config.TMAX, config.DT)
-        self._positions     = self._precompute()
+        self.start = config.AIRCRAFT_START.copy()
+        self.vel = config.TARGET_SPEED
 
-    # ------------------------------------------------------------------
-    # Public interface
-    # ------------------------------------------------------------------
+        # Lazily initialized on first entry into each segment
+        self._curve_start = None
+        self._straight2_start = None
+        self._center = None
+        self._radius = None
 
-    @property
-    def times(self) -> np.ndarray:
-        return self._times
+        # Cached final position so we can hold it after STRAIGHT_TIME2
+        self._final_pos = None
 
-    @property
-    def positions(self) -> np.ndarray:
-        """Shape (N, 3) array of [x, y, z] positions."""
-        return self._positions
+    def position(self, t):
+        v = self.vel
 
-    def position_at_index(self, i: int) -> np.ndarray:
-        """Return the precomputed (3,) position vector at timestep i."""
-        return self._positions[i]
+        # ----------------------------------------------------------
+        # Segment 1: straight flight in +X direction
+        # ----------------------------------------------------------
+        if t <= config.STRAIGHT_TIME1:
+            return np.array([
+                self.start[0] + v * t,
+                self.start[1],
+                self.start[2]
+            ])
 
-    def velocity_at_index(self, i: int) -> np.ndarray:
-        """
-        Finite-difference velocity estimate (m/s).
-        Uses forward difference except at the last point.
-        """
-        if i < len(self._times) - 1:
-            dp = self._positions[i + 1] - self._positions[i]
-            return dp / config.DT
-        else:
-            dp = self._positions[i] - self._positions[i - 1]
-            return dp / config.DT
+        # ----------------------------------------------------------
+        # Segment 2: banked circular turn with vertical drift
+        #
+        # CLIMB_RATE_CURVE adds a realistic vertical displacement
+        # during the turn, matching the reference implementation.
+        # The drift uses a cosine envelope so it starts and ends
+        # smoothly at zero rate (no discontinuity at segment joins).
+        #
+        # Ref: trace_and_chase.py target_location(), curve segment
+        # ----------------------------------------------------------
+        elif t <= config.STRAIGHT_TIME1 + config.CURVE_TIME:
+            tc = t - config.STRAIGHT_TIME1
 
-    # ------------------------------------------------------------------
-    # Precomputation
-    # ------------------------------------------------------------------
-
-    def _precompute(self) -> np.ndarray:
-        """
-        Build the full (N, 3) position array by walking through
-        each time segment analytically.
-        """
-        vel        = config.TARGET_SPEED
-        t1         = config.STRAIGHT_TIME1
-        tc         = config.CURVE_TIME
-        t2         = config.STRAIGHT_TIME2
-        theta      = config.TURN_ANGLE
-        phi        = config.YZ_ANGLE          # yz tilt angle
-        climb      = config.CLIMB_RATE_CURVE
-        start      = config.AIRCRAFT_START.astype(float)
-
-        # Arc radius (negative turn_angle → negative radius handled by sign)
-        radius = (vel * tc) / theta
-
-        # --- Segment boundary positions ---
-        # End of straight 1 / start of curve
-        curve_start = start + np.array([vel * t1, 0.0, 0.0])
-
-        # Arc centre (perpendicular to initial heading, tilted by phi)
-        arc_centre = curve_start + np.array([
-            0.0,
-            radius * np.cos(phi),
-            radius * np.sin(phi),
-        ])
-
-        # End of curve / start of straight 2
-        # At tc the arc_angle = -pi/2 + theta
-        final_arc_angle = -np.pi / 2 + theta
-        climb_offset    = vel**2 * (1 - np.cos(np.pi)) * climb   # (1-cos(π)) = 2
-
-        curve_end = np.array([
-            arc_centre[0] + radius * np.cos(final_arc_angle),
-            arc_centre[1] + radius * np.sin(final_arc_angle) * np.cos(phi)
-                           + np.cos(phi + np.pi / 2) * climb_offset,
-            arc_centre[2] + radius * np.sin(final_arc_angle) * np.sin(phi)
-                           + np.sin(phi + np.pi / 2) * climb_offset,
-        ])
-
-        # Post-turn unit direction vector
-        post_turn_dir = np.array([
-            np.cos(theta),
-            np.sin(theta) * np.cos(phi),
-            np.sin(theta) * np.sin(phi),
-        ])
-
-        # --- Fill position array ---
-        times  = self._times
-        n      = len(times)
-        pos    = np.empty((n, 3))
-
-        for i, t in enumerate(times):
-            if t <= t1:
-                # Segment 1: straight in +X
-                pos[i] = start + np.array([vel * t, 0.0, 0.0])
-
-            elif t <= t1 + tc:
-                # Segment 2: circular arc with optional climb
-                tc_local   = t - t1
-                arc_angle  = -np.pi / 2 + tc_local * theta / tc
-                climb_disp = vel**2 * (1 - np.cos(np.pi * tc_local / tc)) * climb
-
-                pos[i] = np.array([
-                    arc_centre[0] + radius * np.cos(arc_angle),
-                    arc_centre[1] + radius * np.sin(arc_angle) * np.cos(phi)
-                                  + np.cos(phi + np.pi / 2) * climb_disp,
-                    arc_centre[2] + radius * np.sin(arc_angle) * np.sin(phi)
-                                  + np.sin(phi + np.pi / 2) * climb_disp,
+            if self._curve_start is None:
+                self._curve_start = np.array([
+                    self.start[0] + v * config.STRAIGHT_TIME1,
+                    self.start[1],
+                    self.start[2]
+                ])
+                self._radius = (v * config.CURVE_TIME) / config.TURN_ANGLE
+                self._center = np.array([
+                    self._curve_start[0],
+                    self._curve_start[1] + self._radius * np.cos(config.YZ_ANGLE),
+                    self._curve_start[2] + self._radius * np.sin(config.YZ_ANGLE)
                 ])
 
-            elif t <= t1 + tc + t2:
-                # Segment 3: straight in post-turn direction
-                ts     = t - (t1 + tc)
-                pos[i] = curve_end + vel * ts * post_turn_dir
+            angle = tc * config.TURN_ANGLE / config.CURVE_TIME
+            arc_angle = -np.pi / 2 + angle
 
-            else:
-                # Beyond TMAX — hold last position
-                pos[i] = pos[i - 1]
+            # Vertical drift envelope: smooth cosine ramp
+            # Matches trace_and_chase.py exactly
+            drift = v**2 * (1 - np.cos(np.pi * tc / config.CURVE_TIME)) * config.CLIMB_RATE_CURVE
 
-        return pos
+            return np.array([
+                self._center[0] + self._radius * np.cos(arc_angle),
+                self._center[1] + self._radius * np.sin(arc_angle) * np.cos(config.YZ_ANGLE)
+                             + np.cos(config.YZ_ANGLE + np.pi / 2) * drift,
+                self._center[2] + self._radius * np.sin(arc_angle) * np.sin(config.YZ_ANGLE)
+                             + np.sin(config.YZ_ANGLE + np.pi / 2) * drift
+            ])
+
+        # ----------------------------------------------------------
+        # Segment 3: straight flight in post-turn direction
+        # Target holds final position after STRAIGHT_TIME2 elapses
+        # ----------------------------------------------------------
+        else:
+            if self._straight2_start is None:
+                # Evaluate exact curve-end position for a clean join
+                self._straight2_start = self.position(
+                    config.STRAIGHT_TIME1 + config.CURVE_TIME
+                )
+
+            ts = min(t - (config.STRAIGHT_TIME1 + config.CURVE_TIME),
+                     config.STRAIGHT_TIME2)
+
+            dx = np.cos(config.TURN_ANGLE)
+            dy = np.sin(config.TURN_ANGLE) * np.cos(config.YZ_ANGLE)
+            dz = np.sin(config.TURN_ANGLE) * np.sin(config.YZ_ANGLE)
+
+            return np.array([
+                self._straight2_start[0] + v * ts * dx,
+                self._straight2_start[1] + v * ts * dy,
+                self._straight2_start[2] + v * ts * dz
+            ])
