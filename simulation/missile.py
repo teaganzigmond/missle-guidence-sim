@@ -97,6 +97,19 @@ class Missile:
             print(f"  [HIT] distance = {distance:.2f} m")
             self.state = MissileState.HIT
             return self.position
+        
+        # --------------------------------------------------
+        # MISSED condition
+        # If closing velocity goes negative the missile is
+        # moving away from the target — it has passed through
+        # or flown past. No recovery possible.
+        # Ref: MIL-HDBK-1211(MI) Section 6.2.4
+        # --------------------------------------------------
+        closing_vel = -np.dot(r, target_vel - self.velocity) / np.linalg.norm(r)
+        if closing_vel < 0:
+            print(f"  [MISS] closing velocity negative at t, miss distance = {distance:.1f} m")
+            self.state = MissileState.MISSED
+            return self.position
 
         # --------------------------------------------------
         # Proportional Navigation guidance

@@ -3,6 +3,7 @@ from dataclasses import dataclass
 import config
 from simulation.target import Target
 from simulation.missile import Missile
+from simulation.missile import MissileState
 
 
 @dataclass
@@ -60,8 +61,8 @@ class Environment:
             missile_pos = self.missile.step(target_pos, target_vel, config.DT)
 
             if not self.missile.active and not intercepted:
-                intercepted = True
-                intercept_time = t
+                intercepted = self.missile.state == MissileState.HIT
+                intercept_time = t if intercepted else None
 
             self.target_states.append(target_pos)
             self.missile_states.append(missile_pos)
