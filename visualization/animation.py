@@ -130,7 +130,8 @@ def animate(times, target_states, missile_states, result):
             status_text.set_text('')
 
         distance = np.linalg.norm(target_states[frozen] - missile_states[frozen])
-        time_text.set_text(f'Time = {times[frame]:.2f} s')
+        display_time = times[intercept_frame] if (intercept_frame is not None and frame >= intercept_frame) else times[frame]
+        time_text.set_text(f'Time = {display_time:.2f} s')
         distance_text.set_text(f'Distance = {distance:.1f} m')
 
         return (target_point, target_trail, missile_point, missile_trail,
