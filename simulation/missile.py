@@ -16,21 +16,20 @@ class Missile:
 
     def __init__(self):
         self.position = config.MISSILE_START.copy().astype(float)
-        self.speed    = config.MISSILE_SPEED
+        self.mass     = config.MISSILE_MASS
 
-        # Initialize velocity as a unit vector pointing generally toward
-        # the aircraft start, scaled to missile speed.
-        # This gives PN a meaningful initial velocity vector to work with.
+        # SAM launches from dead stop — speed builds during boost phase
         # Ref: MIL-HDBK-1211(MI) Section 4.4.1 - initial conditions
-        initial_direction = config.AIRCRAFT_START - config.MISSILE_START
-        norm = np.linalg.norm(initial_direction)
-        if norm > 0:
-            self.velocity = (initial_direction / norm) * self.speed
-        else:
-            self.velocity = np.array([self.speed, 0.0, 0.0])
+        self.speed    = 0.0
 
-        self.state   = MissileState.FLYING
-        self.peak_g  = 0.0
+        # Initial velocity: small upward nudge so vectors are valid on first step.
+        # Boost phase immediately overrides this with vertical climb.
+        # Ref: MIL-HDBK-1211(MI) Section 4.4.1
+        self.velocity = np.array([0.0, 0.0, 1.0]) * 0.001
+
+        self.state        = MissileState.FLYING
+        self.peak_g       = 0.0
+        self._flight_time = 0.0   # tracks time since launch for motor phase logic
 
     @property
     def active(self):
@@ -60,6 +59,34 @@ class Missile:
             return self.position
 
         # --------------------------------------------------
+        # Motor phase tracking
+        # --------------------------------------------------
+        self._flight_time += dt
+
+        # --------------------------------------------------
+        # BOOST PHASE
+        # High-thrust axial acceleration from dead stop.
+        # PN guidance is inactive — missile climbs vertically.
+        # Speed ramps linearly from 0 to MISSILE_SPEED over BOOST_TIME.
+        # Ref: MIL-HDBK-1211(MI) Section 5.4
+        # Ref: Jane's Land-Based Air Defence — SAM boost profiles
+        # --------------------------------------------------
+        if self._flight_time <= config.BOOST_TIME:
+            self.speed = min(
+                self.speed + config.BOOST_ACCEL * dt,
+                config.MISSILE_SPEED
+            )
+            self.velocity = np.array([0.0, 0.0, 1.0]) * self.speed
+            self.position = self.position + self.velocity * dt
+            return self.position
+
+        # --------------------------------------------------
+        # SUSTAIN PHASE — PN guidance active from here down
+        # Lock speed to MISSILE_SPEED for sustain normalization
+        # --------------------------------------------------
+        self.speed = config.MISSILE_SPEED
+
+        # --------------------------------------------------
         # Check intercept condition
         # Ref: MIL-HDBK-1211(MI) Section 6.2.3
         # --------------------------------------------------
@@ -76,11 +103,11 @@ class Missile:
         # Ref: DTIC ADP010953
         # --------------------------------------------------
         accel = proportional_navigation(
-        self.position,
-        self.velocity,
-        target_pos,
-        target_vel,
-        N=config.NAV_CONSTANT
+            self.position,
+            self.velocity,
+            target_pos,
+            target_vel,
+            N=config.NAV_CONSTANT
         )
 
         # --------------------------------------------------
@@ -112,13 +139,11 @@ class Missile:
 
         # --------------------------------------------------
         # Gravity
-        #
         # Applied after lateral acceleration but before
         # speed normalization. The sustain motor re-normalization
         # below counteracts gravity's effect on speed, but
         # gravity's directional pull (nose-down) is preserved
         # in the updated velocity direction.
-        #
         # Ref: MIL-HDBK-1211(MI) Section 5.3.2
         # Ref: U.S. Standard Atmosphere 1976, Table 2
         # --------------------------------------------------

@@ -20,6 +20,24 @@ STRAIGHT_TIME2 = 25
 TARGET_SPEED = 750    # m/s — Mach ~2.2 at sea level
 MISSILE_SPEED = 1374  # m/s — Mach ~4.0 at sea level (AIM-120 AMRAAM class)
 
+# ---------------------------------------------------------------------------
+# Missile physical properties
+# Based on AIM-120 AMRAAM class tactical missile
+# Ref: Jane's Air-Launched Weapons; globalsecurity.org AIM-120 specs
+# ---------------------------------------------------------------------------
+MISSILE_MASS = 152.0   # kg — launch mass (fixed, fuel burn not modeled at this stage)
+
+# ---------------------------------------------------------------------------
+# Motor boost phase
+# SAM launches from dead stop — boost phase accelerates from 0 to MISSILE_SPEED
+# Boost duration ~3s is representative of tactical SAM solid-fuel boosters
+# During boost, PN guidance is inactive — missile flies a preset vertical climb
+# Ref: Jane's Land-Based Air Defence; MIL-HDBK-1211(MI) Section 5.4
+# ---------------------------------------------------------------------------
+BOOST_TIME = 3.0                            # seconds
+BOOST_ACCEL = MISSILE_SPEED / BOOST_TIME    # m/s^2 — constant axial acceleration
+
+
 TURN_ANGLE = -np.pi * 4/3
 YZ_ANGLE = -np.pi / 12
 
