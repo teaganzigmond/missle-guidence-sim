@@ -110,6 +110,20 @@ class Missile:
         # --------------------------------------------------
         self.velocity = self.velocity + accel_lateral * dt
 
+        # --------------------------------------------------
+        # Gravity
+        #
+        # Applied after lateral acceleration but before
+        # speed normalization. The sustain motor re-normalization
+        # below counteracts gravity's effect on speed, but
+        # gravity's directional pull (nose-down) is preserved
+        # in the updated velocity direction.
+        #
+        # Ref: MIL-HDBK-1211(MI) Section 5.3.2
+        # Ref: U.S. Standard Atmosphere 1976, Table 2
+        # --------------------------------------------------
+        self.velocity += np.array([0.0, 0.0, -config.GRAVITY]) * dt
+
         # Re-normalize to maintain constant speed
         speed = np.linalg.norm(self.velocity)
         if speed > 0:

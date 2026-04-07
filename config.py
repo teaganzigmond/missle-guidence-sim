@@ -4,8 +4,21 @@ STRAIGHT_TIME1 = 25
 CURVE_TIME = 25
 STRAIGHT_TIME2 = 25
 
-TARGET_SPEED = 750
-MISSILE_SPEED = 1950
+# ---------------------------------------------------------------------------
+# Target and missile speeds
+#
+# TARGET_SPEED: 750 m/s ≈ Mach 2.2 at sea level — representative of a
+# fast supersonic fighter (e.g. MiG-25 Foxbat top speed ~Mach 2.8,
+# F-15 Eagle top speed ~Mach 2.5). Realistic for a high-performance
+# evading aircraft.
+#
+# MISSILE_SPEED: 1374 m/s ≈ Mach 4.0 at sea level — matches published
+# top speed of AIM-120 AMRAAM (Mach 4 capable).
+# Ref: Jane's Air-Launched Weapons; globalsecurity.org AIM-120 specs
+# Speed ratio ~1.83:1 (missile:target) — realistic for BVR engagement.
+# ---------------------------------------------------------------------------
+TARGET_SPEED = 750    # m/s — Mach ~2.2 at sea level
+MISSILE_SPEED = 1374  # m/s — Mach ~4.0 at sea level (AIM-120 AMRAAM class)
 
 TURN_ANGLE = -np.pi * 4/3
 YZ_ANGLE = -np.pi / 12
