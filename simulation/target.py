@@ -1,7 +1,4 @@
-from turtle import pos
-
 import numpy as np
-from torch import dist
 import config
 
 
@@ -12,14 +9,17 @@ class Target:
 
     Normal flight: three-segment preset path (straight → banked turn → straight)
 
-    Evasion — hard break arc:
-    Once the missile is detected within TARGET_DETECTION_RANGE, after a
-    reaction delay the target executes a hard 120° banked turn away from
-    the missile. The arc is constructed in velocity-space so it works
-    correctly regardless of which direction the target is flying.
-    After the arc, the target flies straight at afterburner speed.
+    Evasion — chained banked S-turns:
+    Once the missile is detected (after boost completes), after a reaction
+    delay the target executes a series of chained 120° banked arcs, each
+    reversing direction from the last. Each arc includes the same vertical
+    drift formula as the preset curve segment, giving a realistic banked
+    appearance with altitude change through each turn.
 
-    Ref: Shaw, R.L. — Fighter Combat: Tactics and Maneuvering (1985)
+    Arc chain positions are pre-computed including accumulated drift so
+    there are no position discontinuities at arc boundaries.
+
+    Ref: Shaw, R.L. — Fighter Combat: Tactics and Maneuvering (1985), p.64-71
     Ref: Zarchan — Tactical and Strategic Missile Guidance (2012)
     Ref: trace_and_chase.py — reference arc geometry (read-only)
     """
@@ -28,23 +28,18 @@ class Target:
         self.start = config.AIRCRAFT_START.copy()
         self.vel   = config.TARGET_SPEED
 
-        # Segment initialization flags
+        # Segment initialization flags (preset trajectory)
         self._curve_start     = None
         self._straight2_start = None
         self._center          = None
         self._radius          = None
 
         # Evasion state
-        self._evading           = False
-        self._detection_time    = None
-        self._evasion_start_t   = None
-        self._evasion_forward   = None   # unit velocity at evasion start
-        self._evasion_break     = None   # unit break direction
-        self._evasion_center    = None   # center of arc
-        self._evasion_radius    = None   # arc radius
-        self._evasion_angle     = None   # total turn angle
-        self._post_arc_pos      = None   # pre-computed arc end position
-        self._post_arc_dir      = None   # pre-computed arc end direction
+        self._evading         = False
+        self._detection_time  = None
+        self._evasion_start_t = None
+        self._arcs            = []       # list of arc descriptors
+        self._arc_end_times   = []       # cumulative end time for each arc
 
     # ------------------------------------------------------------------
     # Public interface
@@ -65,7 +60,9 @@ class Target:
         if not self._evading:
             pos = self._preset_position(t)
 
-            if missile_pos is not None and t > config.MISSILE_LAUNCH_TIME + config.BOOST_TIME:
+            # Only check for missile after boost phase completes
+            if (missile_pos is not None
+                    and t > config.MISSILE_LAUNCH_TIME + config.BOOST_TIME):
                 dist = np.linalg.norm(missile_pos - pos)
                 if dist < config.TARGET_DETECTION_RANGE:
                     if self._detection_time is None:
@@ -86,34 +83,33 @@ class Target:
 
     def _init_evasion(self, t, pos, missile_pos):
         """
-        Set up evasion arc in velocity-space coordinates.
+        Pre-compute the full chain of S-turn arcs.
 
-        Uses nominal TARGET_SPEED (not finite-diff magnitude) to avoid
-        near-zero speed at segment boundaries. Arc center is pre-computed
-        so the straight phase never sees None.
+        Each arc's start position is computed from the DRIFTED end
+        position of the previous arc — this ensures there are no
+        position discontinuities at arc boundaries.
+
+        The drift formula (cosine envelope) matches the preset curve
+        segment exactly. At the end of each arc (tc = arc_dur):
+            drift = v² * (1 - cos(π)) * CLIMB_RATE_CURVE
+                  = v² * 2 * CLIMB_RATE_CURVE
+        This accumulated offset is tracked and propagated to each
+        subsequent arc's start position.
         """
-        self._evading        = True
+        self._evading         = True
         self._evasion_start_t = t
 
         # ----------------------------------------------------------
-        # Current velocity direction from finite difference
-        # Use nominal speed to avoid magnitude errors at boundaries
+        # Current velocity direction
         # ----------------------------------------------------------
-        t_prev = max(t - config.DT, 0.0)
-        prev   = self._preset_position(t_prev)
-        vel    = pos - prev
-        speed  = np.linalg.norm(vel)
-
-        if speed < 1.0:
-            # Fallback — target is barely moving, use +X
-            forward = np.array([1.0, 0.0, 0.0])
-        else:
-            forward = vel / speed
-
-        self._evasion_forward = forward
+        t_prev  = max(t - config.DT, 0.0)
+        prev    = self._preset_position(t_prev)
+        vel     = pos - prev
+        speed   = np.linalg.norm(vel)
+        forward = vel / speed if speed > 1.0 else np.array([1.0, 0.0, 0.0])
 
         # ----------------------------------------------------------
-        # Break direction — perpendicular to forward, away from missile
+        # Break direction — away from missile
         # ----------------------------------------------------------
         world_up = np.array([0.0, 0.0, 1.0])
         right    = np.cross(forward, world_up)
@@ -121,54 +117,99 @@ class Target:
             right = np.array([0.0, 1.0, 0.0])
         right = right / np.linalg.norm(right)
 
-        # Missile direction from target
         to_missile = missile_pos - pos
-        to_missile_norm = np.linalg.norm(to_missile)
-        if to_missile_norm > 1e-6:
-            to_missile = to_missile / to_missile_norm
+        if np.linalg.norm(to_missile) > 1e-6:
+            to_missile = to_missile / np.linalg.norm(to_missile)
         else:
             to_missile = -forward
 
-        # Break away from missile
-        if np.dot(right, to_missile) > 0:
-            break_dir = -right   # missile right → break left
-        else:
-            break_dir = right    # missile left  → break right
-
-        self._evasion_break = break_dir
+        break_dir = -right if np.dot(right, to_missile) > 0 else right
 
         # ----------------------------------------------------------
-        # Arc geometry using nominal TARGET_SPEED
-        #
+        # Arc parameters
         # r = v² / (n*g)
         # Ref: MIL-HDBK-1797 — Flying Qualities of Piloted Aircraft
         # ----------------------------------------------------------
-        nominal_speed         = config.TARGET_SPEED
-        self._evasion_radius  = (nominal_speed**2
-                                 / (config.TARGET_MAX_G * config.GRAVITY))
-        self._evasion_angle   = np.pi * 2.0 / 3.0   # 120° break turn
-        self._evasion_center  = pos + break_dir * self._evasion_radius
+        speed_nom = config.TARGET_SPEED
+        radius    = speed_nom**2 / (config.TARGET_MAX_G * config.GRAVITY)
+        arc_angle = config.EVASION_TURN_ANGLE
+        omega     = speed_nom / radius
+        arc_dur   = arc_angle / omega
 
         # ----------------------------------------------------------
-        # Pre-compute post-arc state so straight phase is always valid
+        # Drift at the END of one arc (tc = arc_dur)
+        #
+        # drift(tc) = v² * (1 - cos(π * tc / arc_dur)) * CLIMB_RATE_CURVE
+        # At tc = arc_dur: cos(π * arc_dur / arc_dur) = cos(π) = -1
+        # So: drift_end = v² * (1 - (-1)) * CLIMB_RATE_CURVE
+        #               = v² * 2 * CLIMB_RATE_CURVE
+        #
+        # This is the total vertical offset accumulated over one arc.
+        # We propagate this to the start of the next arc so positions
+        # are continuous across arc boundaries.
+        #
+        # Ref: trace_and_chase.py target_location() curve segment
         # ----------------------------------------------------------
-        end_theta = self._evasion_angle
-        r         = self._evasion_radius
-        ctr       = self._evasion_center
+        yz        = config.YZ_ANGLE
+        drift_end = speed_nom**2 * 2.0 * config.CLIMB_RATE_CURVE
+        drift_dy  = np.cos(yz + np.pi / 2) * drift_end
+        drift_dz  = np.sin(yz + np.pi / 2) * drift_end
 
-        self._post_arc_pos = (ctr
-                              - break_dir * r * np.cos(end_theta)
-                              + forward   * r * np.sin(end_theta))
+        # ----------------------------------------------------------
+        # Build arc chain
+        # ----------------------------------------------------------
+        n_arcs        = max(int((config.TMAX - t) / arc_dur) + 2, 6)
+        current_pos   = pos.copy()
+        current_fwd   = forward.copy()
+        current_break = break_dir.copy()
+        cumulative_t  = t
 
-        end_dir = (forward   * np.cos(end_theta)
-                   + break_dir * np.sin(end_theta))
-        norm = np.linalg.norm(end_dir)
-        self._post_arc_dir = end_dir / norm if norm > 1e-6 else forward
+        for i in range(n_arcs):
+            arc_center = current_pos + current_break * radius
+
+            # Geometric end position (without drift)
+            end_theta    = arc_angle
+            end_pos_geom = (arc_center
+                            - current_break * radius * np.cos(end_theta)
+                            + current_fwd   * radius * np.sin(end_theta))
+
+            # Drifted end position — this becomes the next arc's start
+            # The drift offset must be added so the next arc center is
+            # computed from the correct (drifted) start position.
+            end_pos_drifted      = end_pos_geom.copy()
+            end_pos_drifted[1]  += drift_dy
+            end_pos_drifted[2]  += drift_dz
+
+            # End forward direction
+            end_fwd = (current_fwd   * np.cos(end_theta)
+                       + current_break * np.sin(end_theta))
+            norm    = np.linalg.norm(end_fwd)
+            end_fwd = end_fwd / norm if norm > 1e-6 else current_fwd
+
+            self._arcs.append({
+                'start_pos': current_pos.copy(),
+                'forward':   current_fwd.copy(),
+                'break_dir': current_break.copy(),
+                'center':    arc_center.copy(),
+                'radius':    radius,
+                'angle':     arc_angle,
+                'omega':     omega,
+                'duration':  arc_dur,
+            })
+
+            cumulative_t += arc_dur
+            self._arc_end_times.append(cumulative_t)
+
+            # Next arc starts at drifted end of this arc
+            current_pos   = end_pos_drifted
+            current_fwd   = end_fwd
+            current_break = -current_break   # reverse for S-turn
 
         side = 'left' if np.dot(break_dir, right) < 0 else 'right'
-        print(f"  [TARGET] Evasion arc at t={t:.2f}s"
-              f" | r={self._evasion_radius/1000:.1f}km"
-              f" | {side} break")
+        print(f"  [TARGET] S-turn evasion at t={t:.2f}s"
+              f" | r={radius/1000:.1f}km"
+              f" | {side} break first"
+              f" | {n_arcs} arcs planned")
 
     # ------------------------------------------------------------------
     # Evasion position
@@ -176,50 +217,59 @@ class Target:
 
     def _evasion_position(self, t):
         """
-        Position along the break arc, then straight at afterburner.
+        Position along the chained S-turn arc sequence.
 
-        Arc phase:
-            pos(θ) = center - break*r*cos(θ) + forward*r*sin(θ)
-            At θ=0: pos = center - break*r = start_pos  ✓
-            Angular rate: ω = v/r = TARGET_MAX_G*g / v
+        Each arc uses the same banked circle geometry and vertical drift
+        formula as the preset curve segment. The drift at tc=0 is always
+        zero, and the arc center was computed from the drifted end of
+        the previous arc, so positions are continuous at boundaries.
 
-        Straight phase:
-            Afterburner speed ramp: TARGET_SPEED → TARGET_MAX_SPEED over 3s
-            Position integrated analytically.
+        Ref: trace_and_chase.py target_location() curve segment
         """
-        te      = t - self._evasion_start_t
-        speed   = config.TARGET_SPEED
-        radius  = self._evasion_radius
-        omega   = speed / radius
-        arc_time = self._evasion_angle / omega
+        # Find which arc we're in
+        arc_idx = len(self._arcs) - 1
+        for i, end_t in enumerate(self._arc_end_times):
+            if t < end_t - 1e-9:
+                arc_idx = i
+                break
 
-        forward   = self._evasion_forward
-        break_dir = self._evasion_break
-        center    = self._evasion_center
+        arc = self._arcs[arc_idx]
 
-        if te <= arc_time:
-            # Arc phase
-            theta = omega * te
-            pos   = (center
-                     - break_dir * radius * np.cos(theta)
-                     + forward   * radius * np.sin(theta))
-            return pos
+        # Time within this arc, clamped to [0, duration]
+        arc_start_t = (self._arc_end_times[arc_idx - 1]
+                       if arc_idx > 0
+                       else self._evasion_start_t)
+        tc = np.clip(t - arc_start_t, 0.0, arc['duration'])
 
-        else:
-            # Straight phase — afterburner speed ramp
-            ts        = te - arc_time
-            ramp_time = 3.0
-            v0        = config.TARGET_SPEED
-            v1        = config.TARGET_MAX_SPEED
+        forward   = arc['forward']
+        break_dir = arc['break_dir']
+        center    = arc['center']
+        radius    = arc['radius']
+        omega     = arc['omega']
+        duration  = arc['duration']
 
-            if ts <= ramp_time:
-                dist = v0 * ts + (v1 - v0) * ts**2 / (2.0 * ramp_time)
-            else:
-                dist_ramp     = v0 * ramp_time + (v1 - v0) * ramp_time / 2.0
-                dist_straight = v1 * (ts - ramp_time)
-                dist          = dist_ramp + dist_straight
+        theta = omega * tc
 
-            return self._post_arc_pos + self._post_arc_dir * dist
+        # Base arc position — continuous at tc=0 because center was
+        # computed from the drifted start position of this arc
+        pos = (center
+               - break_dir * radius * np.cos(theta)
+               + forward   * radius * np.sin(theta))
+
+        # Vertical drift — cosine envelope, zero at tc=0 and tc=arc_dur
+        # At tc=0: drift=0 → no discontinuity
+        # At tc=arc_dur: drift=drift_end → matches next arc's start
+        # Ref: trace_and_chase.py target_location() curve segment
+        speed = config.TARGET_SPEED
+        drift = (speed**2
+                 * (1 - np.cos(np.pi * tc / duration))
+                 * config.CLIMB_RATE_CURVE)
+
+        yz = config.YZ_ANGLE
+        pos[1] += np.cos(yz + np.pi / 2) * drift
+        pos[2] += np.sin(yz + np.pi / 2) * drift
+
+        return pos
 
     # ------------------------------------------------------------------
     # Preset trajectory

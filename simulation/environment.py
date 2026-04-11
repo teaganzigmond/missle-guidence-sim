@@ -35,9 +35,12 @@ class Environment:
     def run(self):
         print("Running simulation...")
 
-        prev_target_pos = None
-        intercepted = False
-        intercept_time = None
+        prev_target_pos  = None
+        intercepted      = False
+        intercept_time   = None
+        prev_peak_g      = 0.0        # for spike detection
+        DEBUG_INTERVAL   = 500        # print every 500 steps = every 0.5s
+        G_SPIKE_THRESH   = 200.0      # print immediately if g exceeds this
 
         for t in self.times:
             target_pos = self.target.position(t, self.missile.position)
@@ -57,17 +60,16 @@ class Environment:
                 self.missile_states.append(self.missile.position.copy())
                 continue
 
-
             missile_pos = self.missile.step(target_pos, target_vel, config.DT)
 
             if not self.missile.active and not intercepted:
-                intercepted = self.missile.state == MissileState.HIT
+                intercepted    = self.missile.state == MissileState.HIT
                 intercept_time = t if intercepted else None
 
             self.target_states.append(target_pos)
             self.missile_states.append(missile_pos)
 
-        self.target_states = np.array(self.target_states)
+        self.target_states  = np.array(self.target_states)
         self.missile_states = np.array(self.missile_states)
 
         final_miss = np.linalg.norm(
