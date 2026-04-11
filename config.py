@@ -17,7 +17,8 @@ STRAIGHT_TIME2 = 25
 # Ref: Jane's Air-Launched Weapons; globalsecurity.org AIM-120 specs
 # Speed ratio ~1.83:1 (missile:target) — realistic for BVR engagement.
 # ---------------------------------------------------------------------------
-TARGET_SPEED = 750    # m/s — Mach ~2.2 at sea level
+TARGET_SPEED = 857.5    # m/s — Mach ~2.5 at altitude, MiG-25 operational cruise speed
+# TARGET_SPEED = 754.6    # m/s — Mach ~2.2 at sea level
 MISSILE_SPEED = 1374  # m/s — Mach ~4.0 at sea level (AIM-120 AMRAAM class)
 
 # ---------------------------------------------------------------------------
@@ -35,7 +36,27 @@ MISSILE_MASS = 152.0   # kg — launch mass (fixed, fuel burn not modeled at thi
 # Ref: Jane's Land-Based Air Defence; MIL-HDBK-1211(MI) Section 5.4
 # ---------------------------------------------------------------------------
 BOOST_TIME = 3.0                            # seconds
-BOOST_ACCEL = MISSILE_SPEED / BOOST_TIME    # m/s^2 — constant axial acceleration
+BOOST_ACCEL = MISSILE_SPEED / BOOST_TIME    # m/s² — linear ramp assumption
+                                             # Ref: MIL-HDBK-1211(MI) Section 5.4
+# ---------------------------------------------------------------------------
+# Target evasion parameters
+# Models a fighter pilot responding to a missile warning
+#
+# Detection range: modern RWR (Radar Warning Receiver) systems can detect
+# missile launch at ~25-30km. We use 25km as conservative terminal detection.
+# Ref: Jane's Avionics — Radar Warning Receivers
+#
+# Reaction time: ~0.5s accounts for pilot recognition and control input
+# Ref: MIL-HDBK-1472 — Human factors, pilot reaction time
+#
+# Max g: F-15/F-16 class fighter sustained turn ~9g
+# Max speed: full afterburner ~900 m/s (Mach ~2.6)
+# ---------------------------------------------------------------------------
+TARGET_DETECTION_RANGE = 25000.0   # m — missile detection range
+TARGET_REACTION_TIME   = 0.5      # s — pilot reaction delay
+TARGET_MAX_G           = 9.0      # g — max sustained evasive turn
+TARGET_MAX_SPEED       = 1000    # m/s — max speed in afterburner
+# TARGET_MAX_SPEED       = 900.0    # m/s — max speed in afterburner
 
 
 TURN_ANGLE = -np.pi * 4/3
@@ -59,7 +80,7 @@ CLIMB_RATE_CURVE = -0.001
 # Modern IR/radar-guided missiles typically operate 20-40 g
 # Ref: MIL-HDBK-1211 (1995), Section 5
 # MAX_G_FORCE = 30
-MAX_G_FORCE = 50
+MAX_G_FORCE = 40
 
 
 # Gravitational acceleration constant

@@ -86,7 +86,11 @@ def animate(times, target_states, missile_states, result):
     # ----------------------------------------------------------
     # Set axis limits centered on both trajectories (in km)
     # ----------------------------------------------------------
-    all_points = np.vstack([ts, ms])
+    if intercept_frame is not None:
+        all_points = np.vstack([ts[:intercept_frame+1], ms[:intercept_frame+1]])  
+    else:
+        all_points = np.vstack([ts, ms])
+
     padding = 0.1
     max_range = max(
         np.ptp(all_points[:, 0]),
@@ -214,7 +218,11 @@ def animate(times, target_states, missile_states, result):
                         if (intercept_frame is not None and frame >= intercept_frame)
                         else times[frame])
         time_text.set_text(f'T = {display_time:.2f} s')
-        distance_text.set_text(f'D = {distance_m/1000:.2f} km')
+        if distance_m < 1000:
+            distance_text.set_text(f'D = {distance_m:.0f} m')
+        else:
+            distance_text.set_text(f'D = {distance_m/1000:.2f} km')
+
 
         return (target_point, target_trail, missile_point, missile_trail,
                 intercept_marker, time_text, distance_text, status_text)

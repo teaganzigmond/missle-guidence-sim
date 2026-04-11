@@ -40,7 +40,7 @@ class Environment:
         intercept_time = None
 
         for t in self.times:
-            target_pos = self.target.position(t)
+            target_pos = self.target.position(t, self.missile.position)
 
             # Estimate target velocity by finite difference
             if prev_target_pos is not None:
